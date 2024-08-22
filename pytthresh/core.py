@@ -319,9 +319,11 @@ def compress(
             v = tensor_map[ks[i]]
             df = pd.DataFrame({"B": curve[0], "epssq": curve[1]})
             df.to_csv("{}.csv".format("_".join(v.inds)), index=False)
-            plt.plot(curve[0], curve[1], label="_".join(v.inds))
+            plt.plot(np.log10(curve[0]), np.log10(curve[1]), label="_".join(v.inds))
+        plt.xlabel("log10(B)")
+        plt.ylabel("log10(epssq)")
         plt.legend()
-        plt.show()
+        plt.savefig("curve.pdf")
 
     cutoffs = np.round(cutoffs, 3)
     print(
