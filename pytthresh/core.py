@@ -4,7 +4,6 @@ import constriction
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import pandas as pd
 import quimb.tensor as qtn
 import scipy
 from collections import defaultdict
@@ -212,11 +211,14 @@ class File:
         return sum([ct.n_bytes() for ct in self.compressed_tensors])
 
     def save(self, path):
+        raise NotImplementedError
         # Serialize into disk using h5py
-        hf = h5py.File("path", "r")
+        # hf = h5py.File("path", "r")
 
 
-def compress(x: np.ndarray, topology: str, target_eps: float = None):
+def compress(
+    x: np.ndarray, topology: str, target_eps: float = None, debug: bool = False
+):
 
     assert topology in ("tucker", "tt", "ett", "single")
 
@@ -307,6 +309,20 @@ def compress(x: np.ndarray, topology: str, target_eps: float = None):
     # cutoffs = []
     # for i in range(len(encoders)):
     # cutoffs.append(encoders[i]._B_to_index(optimized_Bs[i]))
+    if debug:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        ks = sorted(tensor_map.keys())
+        for i in range(len(curves)):
+            curve = curves[i]
+            v = tensor_map[ks[i]]
+            df = pd.DataFrame({"B": curve[0], "epssq": curve[1]})
+            df.to_csv("{}.csv".format("_".join(v.inds)), index=False)
+            plt.plot(curve[0], curve[1], label="_".join(v.inds))
+        plt.legend()
+        plt.show()
+
     cutoffs = np.round(cutoffs, 3)
     print(
         "Cutoffs:",

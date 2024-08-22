@@ -37,11 +37,12 @@ def compress(
     dtype: Annotated[Dtype, typer.Option(help="Data type of the source tensor")],
     eps: Annotated[float, typer.Option(help="Target relative error, between 0 and 1")],
     topology: Annotated[Topology, typer.Option(help="Tensor network topology")],
+    debug: Annotated[bool, typer.Option("--debug")] = False,
 ):
     shape = [int(x) for x in shape.split(",")]
     with open(input, "rb") as f:
         x = np.fromfile(f, dtype=getattr(np, dtype)).reshape(shape).astype(np.float64)
-    file = core.compress(x, topology=topology, target_eps=eps)
+    file = core.compress(x, topology=topology, target_eps=eps, debug=debug)
     file.save(output)
 
 

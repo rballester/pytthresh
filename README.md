@@ -1,5 +1,12 @@
 # pytthresh: Python Implementation of the TTHRESH Grid Data Compressor
 
+### Installation
+
+```
+pip install -r requirements.txt
+pip install .
+```
+
 ### Example Run
 
 ```
