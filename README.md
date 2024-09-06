@@ -9,12 +9,21 @@ pip install .
 
 ### Example Run
 
+Compression:
+
 ```
-python pytthresh/cli.py compress --input data/3D_sphere_64_uchar.raw --output compressed.pyt --shape 64,64,64 --dtype uint8 --eps 0.02 --topology tucker
+python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --compressed compressed.pyt --shape 64,64,64 --dtype uint8 --eps 0.02 --topology tucker
+```
+
+Decompression:
+
+```
+python pytthresh/cli.py decompress --compressed compressed.pyt --reconstructed decompressed.raw
 ```
 
 ### TODO
 
+- Print statistics
 - Negabinary: saves mask hassle, allows progressive reconstruction
 - Allow specifying a target compression ratio
 - Profiling

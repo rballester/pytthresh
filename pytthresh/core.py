@@ -1,12 +1,43 @@
 import time
-from pytthresh import rle, tensor_network
+from collections import defaultdict
+import bson
 import constriction
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import quimb.tensor as qtn
 import scipy
-from collections import defaultdict
+
+from pytthresh import rle, tensor_network
+
+
+class CompressedPlane:
+
+    def __init__(self, bits, howmany, unique, counts):
+        self.bits = bits
+        self.howmany = howmany
+        self.unique = unique
+        self.counts = counts
+
+    def n_bytes(self):
+        return len(self.bits) * 32 + len(self.unique) * 32 + len(self.counts) * 32
+
+    def serialize(self):
+        return [
+            self.bits.tobytes(),
+            self.howmany,
+            self.unique.tobytes(),
+            self.counts.tobytes(),
+        ]
+
+    @staticmethod
+    def deserialize(data):
+        return CompressedPlane(
+            bits=np.frombuffer(data[0], dtype=np.uint32),
+            howmany=data[1],
+            unique=np.frombuffer(data[2], dtype=np.int32),
+            counts=np.frombuffer(data[3], dtype=np.int64),
+        )
 
 
 class CompressedTensor:
@@ -19,24 +50,21 @@ class CompressedTensor:
 
     def n_bits(self):
         # get_compressed() returns int32's
-        return sum([len(cp["bits"]) * 32 for cp in self.compressed_planes]) + len(
-            self.signs
-        )
+        return sum([cp.n_bytes() for cp in self.compressed_planes]) + len(self.signs)
 
     def n_bytes(self):
         return int(np.ceil(self.n_bits() / 8))
 
     def decode(self):
         coreq = np.zeros(np.prod(list(self.ind_sizes.values())), dtype=np.uint64)
-        for i in range(len(self.compressed_planes)):
+        for i, cp in enumerate(self.compressed_planes):
             q = 63 - i
-            compressed_plane = self.compressed_planes[i]
-            coder = constriction.stream.queue.RangeDecoder(compressed_plane["bits"])
+            coder = constriction.stream.queue.RangeDecoder(cp.bits)
             entropy_model = constriction.stream.model.Categorical(
-                compressed_plane["counts"] / np.sum(compressed_plane["counts"])
+                cp.counts / np.sum(cp.counts)
             )
-            inverse = coder.decode(entropy_model, compressed_plane["howmany"])
-            plane_rle = compressed_plane["unique"][inverse]
+            inverse = coder.decode(entropy_model, cp.howmany)
+            plane_rle = cp.unique[inverse]
             plane = rle.decode(plane_rle).astype(np.uint64)
             coreq[: len(plane)] += plane << q
         mask = coreq != 0
@@ -50,6 +78,114 @@ class CompressedTensor:
         # c_padded = np.zeros(shape)
         # c_padded[tuple(slice(0, r) for r in self.ranks)] = c
         return qtn.Tensor(c, inds=list(self.ind_sizes.keys()))
+
+    def serialize(self):
+        return [
+            {k: v.item() for k, v in self.ind_sizes.items()},
+            [cp.serialize() for cp in self.compressed_planes],
+            np.packbits(self.signs).tobytes(),
+            len(self.signs),
+            self.scale,
+        ]
+
+    @staticmethod
+    def deserialize(data):
+        return CompressedTensor(
+            ind_sizes=data[0],
+            compressed_planes=[CompressedPlane.deserialize(cp) for cp in data[1]],
+            signs=np.unpackbits(
+                np.frombuffer(data[2], dtype=np.uint8), count=data[3]
+            ).astype(np.int32),
+            scale=data[4],
+        )
+
+
+class File:
+    def __init__(self, compressed_tensors, shape, dtype, min, max):
+        self.compressed_tensors = compressed_tensors
+        self.shape = shape
+        self.dtype = dtype
+        self.min = min
+        self.max = max
+
+    def n_bytes(self):
+        return sum([ct.n_bytes() for ct in self.compressed_tensors])
+
+    def to_disk(self, filename):
+        d = {
+            "compressed_tensors": [ct.serialize() for ct in self.compressed_tensors],
+            "shape": self.shape,
+            "dtype": self.dtype.str,
+            "min": self.min,
+            "max": self.max,
+        }
+        bson_data = bson.encode(d)
+        with open(filename, "wb") as f:
+            f.write(bson_data)
+
+    @staticmethod
+    def from_disk(filename):
+        with open(filename, "rb") as f:
+            bson_data = f.read()
+        d = bson.BSON.decode(bson_data)
+        return File(
+            compressed_tensors=[
+                CompressedTensor.deserialize(ct) for ct in d["compressed_tensors"]
+            ],
+            shape=d["shape"],
+            dtype=np.dtype(d["dtype"]),
+            min=d["min"],
+            max=d["max"],
+        )
+
+    def decompress(self, debug=False):
+
+        tensors = [ct.decode() for ct in self.compressed_tensors]
+        if len(tensors) == 1:
+            result = tensors[0].data
+        else:
+            tensor_map = {i: tensors[i] for i in range(len(tensors))}
+
+            tid = 0
+            tn = qtn.TensorNetwork()
+            for k, v in sorted(tensor_map.items()):
+                # if v.ndim == 3:
+                # v = qtn.Tensor().transpose(np.argsort([0, 2, 1]))
+                tn.add_tensor(v, tid=k)
+
+            seen = np.zeros(len(tn.tensors), dtype=bool)
+            seen[tid] = True
+
+            g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])])
+
+            def recursion(tid, seen):
+                for edge in g.edges(tid):
+                    neighbor = edge[1]
+                    if not seen[neighbor]:
+                        seen[neighbor] = True
+                        recursion(neighbor, seen)
+                        tn._canonize_between_tids(neighbor, tid, absorb="right")
+                data = tensor_map[tid].data
+                tn.tensor_map[tid].modify(data=data)
+
+            recursion(tid, seen)
+            if debug:
+                for t in tn.tensors:
+                    print(t)
+                print(tn.outer_inds())
+            result = tn.contract(
+                output_inds=[f"i{i}" for i in range(len(tn.outer_inds()))]
+            ).data
+
+        # Recover original shape
+        result = np.pad(
+            result,
+            [[0, self.shape[i] - result.shape[i]] for i in range(len(self.shape))],
+        )
+
+        # Clip and cast to original dtype
+        np.clip(result, self.min, self.max, out=result)
+        return result.astype(self.dtype)
 
 
 class TensorEncoder:
@@ -94,7 +230,7 @@ class TensorEncoder:
         encoder = constriction.stream.queue.RangeEncoder()
         encoder.encode(inverse.astype(np.int32), entropy_model)
         self.compressed_planes.append(
-            dict(
+            CompressedPlane(
                 bits=encoder.get_compressed(),
                 howmany=len(inverse),
                 unique=unique,
@@ -113,7 +249,7 @@ class TensorEncoder:
         self.plane_Bs.append(
             # len(self.compressed_planes[-1]) * 4 * 8
             # + np.sum(self.mask)
-            int(sum([len(cp["bits"]) for cp in self.compressed_planes])) * 4 * 8
+            int(sum([len(cp.bits) for cp in self.compressed_planes])) * 4 * 8
             + np.sum(self.mask)
         )
         self.plane_epss.append(np.sum(self.cumulative_plane_sumsq) / self.normsq)
@@ -157,11 +293,12 @@ class TensorEncoder:
         plane = (self.coreq[:bp] >> (63 - last_plane)) & 1
         self._encode(plane)
         self.mask[:bp] = np.logical_or(self.mask[:bp], plane)
+        signs = self.signs[self.mask == True]
         return CompressedTensor(
-            ranks,
-            self.compressed_planes,
-            self.signs[self.mask == True],
-            self.scale,
+            ind_sizes=ranks,
+            compressed_planes=self.compressed_planes,
+            signs=signs,
+            scale=self.scale,
         )
 
     def get_convex_curve(self):
@@ -202,24 +339,19 @@ class TensorEncoder:
         )(B).item()
 
 
-class File:
-    def __init__(self, compressed_tensors, shape):
-        self.compressed_tensors = compressed_tensors
-        self.shape = shape
-
-    def n_bytes(self):
-        return sum([ct.n_bytes() for ct in self.compressed_tensors])
-
-    def save(self, path):
-        raise NotImplementedError
-        # Serialize into disk using h5py
-        # hf = h5py.File("path", "r")
+# def to_disk(*args, **kwargs):
+#     filename = kwargs.pop("filename")
+#     file = to_object(*args, **kwargs)
+#     file.to_disk(filename)
 
 
-def compress(
+def to_object(
     x: np.ndarray, topology: str, target_eps: float = None, debug: bool = False
 ):
 
+    dtype = x.dtype
+    a_min, a_max = x.min().item(), x.max().item()
+    x = x.astype(np.float64)
     assert topology in ("tucker", "tt", "ett", "single")
 
     if topology == "single":
@@ -326,12 +458,14 @@ def compress(
         plt.savefig("curve.pdf")
 
     cutoffs = np.round(cutoffs, 3)
-    print(
-        "Cutoffs:",
-        ", ".join(
-            f"{cutoffs[i]}/{len(encoders[i].plane_Bs)}" for i in range(len(encoders))
-        ),
-    )
+    if debug:
+        print(
+            "Cutoffs:",
+            ", ".join(
+                f"{cutoffs[i]}/{len(encoders[i].plane_Bs)}"
+                for i in range(len(encoders))
+            ),
+        )
     # for e in encoders[3:6]:
     # plt.plot(e.plane_Bs, e.plane_epss)
     # cc = e.get_convex_curve()
@@ -345,54 +479,17 @@ def compress(
             global_ranks[k] = min(global_ranks[k], v)
     for i in range(len(encoders)):
         result.append(encoders[i].finish(cutoffs[i], global_ranks))
-    return File(result, shape=x.shape)
+    return File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max)
 
 
-def decompress(file):
+# def from_disk(filename=None, debug=False):
 
-    tensors = [ct.decode() for ct in file.compressed_tensors]
-    if len(tensors) == 1:
-        result = tensors[0].data
-    else:
-        tensor_map = {i: tensors[i] for i in range(len(tensors))}
-
-        tid = 0
-        tn = qtn.TensorNetwork()
-        for k, v in sorted(tensor_map.items()):
-            # if v.ndim == 3:
-            # v = qtn.Tensor().transpose(np.argsort([0, 2, 1]))
-            tn.add_tensor(v, tid=k)
-
-        seen = np.zeros(len(tn.tensors), dtype=bool)
-        seen[tid] = True
-
-        g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])])
-
-        def recursion(tid, seen):
-            for edge in g.edges(tid):
-                neighbor = edge[1]
-                if not seen[neighbor]:
-                    seen[neighbor] = True
-                    recursion(neighbor, seen)
-                    tn._canonize_between_tids(neighbor, tid, absorb="right")
-            data = tensor_map[tid].data
-            tn.tensor_map[tid].modify(data=data)
-
-        recursion(tid, seen)
-        for t in tn.tensors:
-            print(t)
-        print(tn.outer_inds())
-        result = tn.contract(
-            output_inds=[f"i{i}" for i in range(len(tn.outer_inds()))]
-        ).data
-
-    return np.pad(
-        result, [[0, file.shape[i] - result.shape[i]] for i in range(len(file.shape))]
-    )
+#     file = File.from_disk(filename)
+#     return file.decompress(debug)
 
 
 def optimize(Bs, epss, target_cr=None, target_eps=None, datalen=None):
-
+    # TODO deal with target_cr / datalen
     A = []
     b = []
     N = len(Bs)
