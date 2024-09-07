@@ -1,5 +1,5 @@
 from enum import Enum
-
+import time
 import numpy as np
 import typer
 from typing_extensions import Annotated
@@ -52,6 +52,12 @@ def compress(
             show_default=False,
         ),
     ],
+    statistics: Annotated[
+        bool,
+        typer.Option(
+            help="Print statistics",
+        ),
+    ] = False,
     debug: Annotated[
         bool,
         typer.Option(
@@ -66,6 +72,9 @@ def compress(
         typer.Option(help="Output file to decompress to, if desired"),
     ] = None,
 ):
+    if debug:
+        statistics = True
+
     shape_list = []
     for x in shape.split(","):
         if "^" in x:
@@ -76,11 +85,32 @@ def compress(
     assert len(shape_list) >= 2
     with open(original, "rb") as f:
         x = np.fromfile(f, dtype=np.dtype(dtype)).reshape(shape_list)
+    start = time.time()
     file = core.to_object(x, topology=topology, target_eps=eps, debug=debug)
-    if compressed is not None:
-        file.to_disk(compressed)
+    compressiontime = time.time() - start
+    if statistics or compressed is not None:
+        bson_data = file.encode()
+        nbytes = len(bson_data)
+        if compressed is not None:
+            with open(compressed, "wb") as f:
+                f.write(bson_data)
+            # file.to_disk(compressed)
+    if statistics:
+        print(
+            f"oldbits = {x.nbytes*8}, newbits = {nbytes*8}, compressionratio = {x.nbytes/nbytes}, bpv = {nbytes*8/x.size}, compressiontime = {compressiontime}, MBps = {x.nbytes/compressiontime/1e6}"
+        )
     if reconstructed is not None:
+        start = time.time()
         reco = file.decompress(debug)
+        reconstructiontime = time.time() - start
+        if statistics:
+            diffnorm = np.linalg.norm(x.astype(float) - reco.astype(float))
+            eps = diffnorm / np.linalg.norm(x)
+            rmse = diffnorm / np.sqrt(x.size)
+            psnr = 20 * np.log10((float(x.max()) - float(x.min())) / (2 * rmse))
+            print(
+                f"eps = {eps}, rmse = {rmse}, psnr = {psnr}, reconstructiontime = {reconstructiontime}, MBps = {x.nbytes/reconstructiontime/1e6}"
+            )
         with open(reconstructed, "wb") as f:
             reco.tofile(f)
 
@@ -100,6 +130,12 @@ def decompress(
             help="Path for the output decompressed tensor", show_default=False
         ),
     ],
+    statistics: Annotated[
+        bool,
+        typer.Option(
+            help="Print statistics",
+        ),
+    ] = False,
     debug: Annotated[
         bool,
         typer.Option(
@@ -107,8 +143,17 @@ def decompress(
         ),
     ] = False,
 ):
+    if debug:
+        statistics = True
+
     file = core.File.from_disk(compressed)
+    start = time.time()
     reco = file.decompress(debug)
+    reconstructiontime = time.time() - start
+    if statistics:
+        print(
+            f"reconstructiontime = {reconstructiontime}, MBps = {x.nbytes/reconstructiontime/1e6}"
+        )
     if reconstructed is not None:
         with open(reconstructed, "wb") as f:
             reco.tofile(f)

@@ -103,15 +103,19 @@ class CompressedTensor:
 class File:
     def __init__(self, compressed_tensors, shape, dtype, min, max):
         self.compressed_tensors = compressed_tensors
+
+        # "Metadata" needed to reconstruct the tensor
         self.shape = shape
         self.dtype = dtype
+
+        # Min and max values for clipping. This prevents underflow/overflow and preserves the original data range (which helps when rendering)
         self.min = min
         self.max = max
 
     def n_bytes(self):
         return sum([ct.n_bytes() for ct in self.compressed_tensors])
 
-    def to_disk(self, filename):
+    def encode(self) -> bytes:
         d = {
             "compressed_tensors": [ct.serialize() for ct in self.compressed_tensors],
             "shape": self.shape,
@@ -119,7 +123,10 @@ class File:
             "min": self.min,
             "max": self.max,
         }
-        bson_data = bson.encode(d)
+        return bson.encode(d)
+
+    def to_disk(self, filename):
+        bson_data = self.encode()
         with open(filename, "wb") as f:
             f.write(bson_data)
 
@@ -489,7 +496,7 @@ def to_object(
 
 
 def optimize(Bs, epss, target_cr=None, target_eps=None, datalen=None):
-    # TODO deal with target_cr / datalen
+    # TODO deal with target_cr and datalen
     A = []
     b = []
     N = len(Bs)

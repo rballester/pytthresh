@@ -21,9 +21,14 @@ Decompression:
 python pytthresh/cli.py decompress --compressed compressed.pyt --reconstructed decompressed.raw
 ```
 
+All in one, while printing statistics:
+
+```
+python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --reconstructed decompressed.raw --shape 64,64,64 --dtype uint8 --eps 0.02 --topology tucker --statistics
+```
+
 ### TODO
 
-- Print statistics
 - Negabinary: saves mask hassle, allows progressive reconstruction
 - Allow specifying a target compression ratio
 - Profiling
@@ -33,3 +38,4 @@ python pytthresh/cli.py decompress --compressed compressed.pyt --reconstructed d
 - Renormalize cores as they are compressed
 - Optimize dimension order
 - Work with float32 instead of 64?
+- Split into bricks and process in parallel
