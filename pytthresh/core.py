@@ -11,6 +11,28 @@ import scipy
 from pytthresh import rle, tensor_network
 
 
+def entropy_encode(x):
+    unique, inverse, counts = np.unique(x, return_inverse=True, return_counts=True)
+    if len(counts) < 2:  # constriction needs at least 2 symbols
+        assert len(counts) > 0
+        counts = np.concatenate([counts, [0]])
+    entropy_model = constriction.stream.model.Categorical(
+        counts / np.sum(counts), perfect=False
+    )
+    encoder = constriction.stream.queue.RangeEncoder()
+    encoder.encode(inverse.astype(np.int32), entropy_model)
+    return encoder.get_compressed(), len(inverse), unique, counts
+
+
+def entropy_decode(bits, howmany, unique, counts):
+    coder = constriction.stream.queue.RangeDecoder(bits)
+    entropy_model = constriction.stream.model.Categorical(
+        counts / np.sum(counts), perfect=False
+    )
+    inverse = coder.decode(entropy_model, howmany)
+    return unique[inverse]
+
+
 class CompressedPlane:
 
     def __init__(self, bits, howmany, unique, counts):
@@ -26,8 +48,8 @@ class CompressedPlane:
         return [
             self.bits.tobytes(),
             self.howmany,
-            self.unique.tobytes(),
-            self.counts.tobytes(),
+            self.unique.astype(np.uint32).tobytes(),
+            self.counts.astype(np.uint32).tobytes(),
         ]
 
     @staticmethod
@@ -35,8 +57,8 @@ class CompressedPlane:
         return CompressedPlane(
             bits=np.frombuffer(data[0], dtype=np.uint32),
             howmany=data[1],
-            unique=np.frombuffer(data[2], dtype=np.int32),
-            counts=np.frombuffer(data[3], dtype=np.int64),
+            unique=np.frombuffer(data[2], dtype=np.uint32).astype(np.int32),
+            counts=np.frombuffer(data[3], dtype=np.uint32),
         )
 
 
@@ -59,15 +81,12 @@ class CompressedTensor:
         coreq = np.zeros(np.prod(list(self.ind_sizes.values())), dtype=np.uint64)
         for i, cp in enumerate(self.compressed_planes):
             q = 63 - i
-            coder = constriction.stream.queue.RangeDecoder(cp.bits)
-            entropy_model = constriction.stream.model.Categorical(
-                cp.counts / np.sum(cp.counts)
-            )
-            inverse = coder.decode(entropy_model, cp.howmany)
-            plane_rle = cp.unique[inverse]
+            plane_rle = entropy_decode(cp.bits, cp.howmany, cp.unique, cp.counts)
             plane = rle.decode(plane_rle).astype(np.uint64)
             coreq[: len(plane)] += plane << q
         mask = coreq != 0
+        if q >= 1:
+            coreq[mask == True] += 1 << (q - 1)
         c = coreq.astype(np.float64) / self.scale
         try:
             c[mask == True] *= self.signs * 2 - 1  # TODO more efficient
@@ -227,19 +246,11 @@ class TensorEncoder:
 
     def _encode(self, plane):
         plane_rle = rle.encode(plane).astype(np.int32)
-        unique, inverse, counts = np.unique(
-            plane_rle, return_inverse=True, return_counts=True
-        )
-        if len(counts) < 2:  # constriction needs at least 2 symbols
-            assert len(counts) > 0
-            counts = np.concatenate([counts, [0]])
-        entropy_model = constriction.stream.model.Categorical(counts / np.sum(counts))
-        encoder = constriction.stream.queue.RangeEncoder()
-        encoder.encode(inverse.astype(np.int32), entropy_model)
+        bits, howmany, unique, counts = entropy_encode(plane_rle)
         self.compressed_planes.append(
             CompressedPlane(
-                bits=encoder.get_compressed(),
-                howmany=len(inverse),
+                bits=bits,
+                howmany=howmany,
                 unique=unique,
                 counts=counts,
             )
@@ -290,7 +301,7 @@ class TensorEncoder:
         self.signs = self.signs.flatten()
 
         self.compressed_planes = []
-        last_plane = int(np.ceil(cutoff)) - 1
+        last_plane = int(np.floor(cutoff))
         self.mask = (self.coreq >> (64 - last_plane)) != 0
         for plane in range(63, 63 - last_plane, -1):
             plane = (self.coreq >> plane) & 1
@@ -301,6 +312,7 @@ class TensorEncoder:
         self._encode(plane)
         self.mask[:bp] = np.logical_or(self.mask[:bp], plane)
         signs = self.signs[self.mask == True]
+
         return CompressedTensor(
             ind_sizes=ranks,
             compressed_planes=self.compressed_planes,
@@ -354,8 +366,8 @@ class TensorEncoder:
 
 def to_object(
     x: np.ndarray, topology: str, target_eps: float = None, debug: bool = False
-):
-
+) -> File:
+    start = time.time()
     dtype = x.dtype
     a_min, a_max = x.min().item(), x.max().item()
     x = x.astype(np.float64)
@@ -406,6 +418,7 @@ def to_object(
 
         # start = time.time()
         recursion(tid, seen)
+    decomposition_time = time.time() - start
     # print("Recursion time:", time.time() - start)
     # return tensor_map
     encoders = []
@@ -448,23 +461,24 @@ def to_object(
     # cutoffs = []
     # for i in range(len(encoders)):
     # cutoffs.append(encoders[i]._B_to_index(optimized_Bs[i]))
-    if debug:
-        import matplotlib.pyplot as plt
-        import pandas as pd
+    # if debug:
+    #     import matplotlib.pyplot as plt
+    #     import pandas as pd
 
-        ks = sorted(tensor_map.keys())
-        for i in range(len(curves)):
-            curve = curves[i]
-            v = tensor_map[ks[i]]
-            df = pd.DataFrame({"B": curve[0], "epssq": curve[1]})
-            df.to_csv("{}.csv".format("_".join(v.inds)), index=False)
-            plt.plot(np.log10(curve[0]), np.log10(curve[1]), label="_".join(v.inds))
-        plt.xlabel("log10(B)")
-        plt.ylabel("log10(epssq)")
-        plt.legend()
-        plt.savefig("curve.pdf")
+    #     ks = sorted(tensor_map.keys())
+    #     for i in range(len(curves)):
+    #         curve = curves[i]
+    #         v = tensor_map[ks[i]]
+    #         df = pd.DataFrame({"B": curve[0], "epssq": curve[1]})
+    #         df.to_csv("{}.csv".format("_".join(v.inds)), index=False)
+    #         plt.plot(np.log10(curve[0]), np.log10(curve[1]), label="_".join(v.inds))
+    #     plt.xlabel("log10(B)")
+    #     plt.ylabel("log10(epssq)")
+    #     plt.legend()
+    #     plt.savefig("curve.pdf")
 
     cutoffs = np.round(cutoffs, 3)
+
     if debug:
         print(
             "Cutoffs:",
