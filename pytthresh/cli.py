@@ -97,19 +97,22 @@ def compress(
             # file.to_disk(compressed)
     if statistics:
         print(
-            f"oldbits = {x.nbytes*8}, newbits = {nbytes*8}, compressionratio = {x.nbytes/nbytes}, bpv = {nbytes*8/x.size}, compressiontime = {compressiontime}, MBps = {x.nbytes/compressiontime/1e6}"
+            f"oldbits = {x.nbytes*8}, newbits = {nbytes*8}, compressionratio = {x.nbytes/nbytes}, bpv = {nbytes*8/x.size}, compressiontime = {compressiontime}, compressionMBps = {x.nbytes/compressiontime/1e6}"
         )
     if reconstructed is not None:
         start = time.time()
-        reco = file.decompress(debug)
-        reconstructiontime = time.time() - start
+        if compressed is None:  # Decompress from memory
+            reco = file.decompress(debug)
+        else:  # Decompress from disk
+            reco = core.File.from_disk(compressed).decompress(debug)
+        decompressiontime = time.time() - start
         if statistics:
             diffnorm = np.linalg.norm(x.astype(float) - reco.astype(float))
             eps = diffnorm / np.linalg.norm(x)
             rmse = diffnorm / np.sqrt(x.size)
             psnr = 20 * np.log10((float(x.max()) - float(x.min())) / (2 * rmse))
             print(
-                f"eps = {eps}, rmse = {rmse}, psnr = {psnr}, reconstructiontime = {reconstructiontime}, MBps = {x.nbytes/reconstructiontime/1e6}"
+                f"eps = {eps}, rmse = {rmse}, psnr = {psnr}, decompressiontime = {decompressiontime}, decompressionMBps = {x.nbytes/decompressiontime/1e6}"
             )
         with open(reconstructed, "wb") as f:
             reco.tofile(f)
@@ -149,10 +152,10 @@ def decompress(
     file = core.File.from_disk(compressed)
     start = time.time()
     reco = file.decompress(debug)
-    reconstructiontime = time.time() - start
+    decompressiontime = time.time() - start
     if statistics:
         print(
-            f"reconstructiontime = {reconstructiontime}, MBps = {x.nbytes/reconstructiontime/1e6}"
+            f"decompressiontime = {decompressiontime}, decompressionMBps = {reco.nbytes/decompressiontime/1e6}"
         )
     if reconstructed is not None:
         with open(reconstructed, "wb") as f:
