@@ -3,7 +3,6 @@
 ### Installation
 
 ```
-pip install -r requirements.txt
 pip install .
 ```
 
@@ -29,6 +28,7 @@ python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --recons
 
 ### TODO
 
+- `counts` can be uint32
 - Negabinary: saves mask hassle, allows progressive reconstruction
 - Allow specifying a target compression ratio
 - Profiling

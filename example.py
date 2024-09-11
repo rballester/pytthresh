@@ -17,5 +17,5 @@ reco = compressed.decompress()
 print("Decompression time:", time.time() - start)
 
 ## Metrics
-print("Compression ratio:", x.size / compressed.n_bytes())
+print("Compression ratio:", x.nbytes / compressed.n_bytes())
 print("Final error:", np.linalg.norm(x - reco.data) / np.linalg.norm(x))

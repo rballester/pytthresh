@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "pytthresh"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+typer = "^0.12.5"
+numpy = "^1.26"
+numba = "^0.60.0"
+pymongo = "^4.8.0"
+constriction = "^0.4.0"
+matplotlib = "^3.9.2"
+networkx = "^3.3"
+pandas = "^2.2.2"
+quimb = "^1.8.4"
+
+[tool.poetry.scripts]
+pytthresh = "pytthresh.cli:app"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
