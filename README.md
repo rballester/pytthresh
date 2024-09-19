@@ -28,8 +28,8 @@ python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --recons
 
 ### TODO
 
-- `counts` can be uint32
 - Negabinary: saves mask hassle, allows progressive reconstruction
+- Algorithm to limit absolute error
 - Allow specifying a target compression ratio
 - Profiling
 - Case when input tensor is all zeros produces nan (normsq is 0)

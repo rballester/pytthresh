@@ -1,6 +1,7 @@
 import time
 from collections import defaultdict
 import bson
+import rich
 import constriction
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -57,7 +58,7 @@ class CompressedPlane:
         return CompressedPlane(
             bits=np.frombuffer(data[0], dtype=np.uint32),
             howmany=data[1],
-            unique=np.frombuffer(data[2], dtype=np.uint32).astype(np.int32),
+            unique=np.frombuffer(data[2], dtype=np.uint32),
             counts=np.frombuffer(data[3], dtype=np.uint32),
         )
 
@@ -88,10 +89,7 @@ class CompressedTensor:
         if q >= 1:
             coreq[mask == True] += 1 << (q - 1)
         c = coreq.astype(np.float64) / self.scale
-        try:
-            c[mask == True] *= self.signs * 2 - 1  # TODO more efficient
-        except:
-            assert 0
+        c[mask == True] *= self.signs * 2 - 1
         c = c.reshape(list(self.ind_sizes.values()))
         # shape = list(self.ind_sizes.values())
         # c_padded = np.zeros(shape)
@@ -164,7 +162,7 @@ class File:
             max=d["max"],
         )
 
-    def decompress(self, debug=False):
+    def decompress(self, debug=False) -> np.ndarray:
 
         tensors = [ct.decode() for ct in self.compressed_tensors]
         if len(tensors) == 1:
@@ -365,81 +363,152 @@ class TensorEncoder:
 
 
 def to_object(
-    x: np.ndarray, topology: str, target_eps: float = None, debug: bool = False
+    x: np.ndarray, topology: str, target_eps: float = None, statistics: bool = False, debug: bool = False
 ) -> File:
+    bloh = time.time()
+    info = {}
     start = time.time()
     dtype = x.dtype
     a_min, a_max = x.min().item(), x.max().item()
     x = x.astype(np.float64)
     assert topology in ("tucker", "tt", "ett", "single")
+    info['statistics_time'] = time.time() - start
 
     if topology == "single":
         # tn = qtn.TensorNetwork([qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])])
         tensor_map = {0: qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])}
     else:
+        start = time.time()
         tn = tensor_network.build_tensor_network(x, topology)
+        info['build_time'] = time.time() - start
 
         # for k, v in tn.tensor_map.items():
         # print(f"{k} -> {v.tags}")
 
-        start = time.time()
+        # start = time.time()
         # tn.compress_all(max_bond=256, canonize=True, inplace=True, absorb="both")
-        tn.compress_all_tree(inplace=True)
+        # tn.compress_all_tree(inplace=True)
+
+        # order out spanning tree by depth first search
+        def sorter(t, tn, distances, connectivity):
+            return distances[t]
+
+        # tid0 = tn.most_central_tid()
+        if topology == 'tucker':
+            tid0 = 0
+        else:
+            tid0 = (x.ndim-1)//2
+        span = tn.get_tree_span([tid0], sorter=sorter)
+
+        # First pass: orthogonalize towards tid0
+        # TODO see if we can build_tensor_network in already orthogonalized form
+        # start = time.time()
+        # for tid1, tid2, _ in span[::-1]:
+        #     tn._canonize_between_tids(
+        #         tid1, tid2, method="qr", absorb="right"
+        #     )
+        # info['orthogonalize_time'] = time.time() - start
+        info['canonize_time'] = 0
+
+        # Second pass: compress
+        # for tid1, tid2, _ in span:
+        #     # absorb='right' shifts orthog center inwards
+        #     tn._compress_between_tids(
+        #         tid1,
+        #         tid2,
+        #         absorb="right",
+        #         canonize_distance=float("inf")
+        #     )
+
         # print("*********", time.time() - start)
-        for i in range(1):
+        # for i in range(1):
             # tn.canonize_around(inplace=True, tags="C3", absorb="right")
-            tn.canonize_around(inplace=True, tags="C0", absorb="right")
+            # tn.canonize_around(inplace=True, tags="C0", absorb="right")
         # for t in tn.tensors:
         # print(t)
 
         # best = tn.copy(deep=True)
-        tid = 0
+        # start = time.time()
+        # tid = 0
         seen = np.zeros(len(tn.tensors), dtype=bool)
-        seen[tid] = True
+        seen[tid0] = True
         tensor_map = {}
-        g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])])
+        # print(time.time()-start)
+        # Make graph a default dict
+        graph = defaultdict(lambda: set())
+        for e in tn.get_tree_span(tids=[tid0]):
+            graph[e[0]].add(e[1])
+            graph[e[1]].add(e[0])
+        # l = [[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])]
+
+        # start = time.time()
+        # tn.get_tree_span(tids=[tid])
+        # g = nx.Graph(l)
+        # info['graph_time'] = time.time() - start
 
         def recursion(tid, seen):
-            x = tn.tensor_map[tid].data
-            compressed = x.copy()
-            tensor_map[tid] = qtn.Tensor(
-                compressed, inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
-            )
-            for edge in g.edges(tid):
-                neighbor = edge[1]
+            for neighbor in graph[tid]:
                 if not seen[neighbor]:
+
+                    # tn._canonize_between_tids(
+                    #     tid, neighbor, method="qr", absorb="right"
+                    # )
+                    # tn._compress_between_tids(
+                    #     tid, neighbor, absorb="left", canonize_distance=False
+                    # )
+                    qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', gauge_smudge=0)
+            tensor_map[tid] = qtn.Tensor(
+                tn.tensor_map[tid].data.copy(), inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
+            )
+
+            for neighbor in graph[tid]:
+                if not seen[neighbor]:
+                    start = time.time()
                     seen[neighbor] = True
                     src = tn.tensor_map[tid].copy(deep=True)
                     tn._canonize_between_tids(
-                        tid, neighbor, method="qr", absorb="right"
+                        tid, neighbor, method='qr', absorb="right", gauge_smudge=0
                     )
+                    info['canonize_time'] += time.time() - start
                     recursion(neighbor, seen)
                     tn.tensor_map[tid] = src
 
-        # start = time.time()
-        recursion(tid, seen)
-    decomposition_time = time.time() - start
-    # print("Recursion time:", time.time() - start)
+        start = time.time()
+        recursion(tid0, seen)
+        info['decomposition_time'] = time.time() - start
+    # decomposition_time = time.time() - start
     # return tensor_map
+    info['encode_time'] = 0
+    start = time.time()
     encoders = []
     for k, v in sorted(tensor_map.items()):
         e = TensorEncoder(v)
         e.advance()
         encoders.append(e)
+    info['encode_time'] += time.time() - start
 
     done = False
     last_cutoffs = None
+    info['curve_time'] = 0
+    info['optimize_time'] = 0
     while not done:
+        start = time.time()
         curves = [e.get_convex_curve() for e in encoders]
+        info['curve_time'] = time.time() - start
         Bs = [c[0] for c in curves]
         epss = [c[1] for c in curves]
         try:
+            start = time.time()
             optimized_Bs = optimize(Bs, epss, target_eps=target_eps)
+            info['optimize_time'] += time.time() - start
         except ValueError:
             # Did not converge: we advance all encoders and try again
-            # print("Warning: optimization did not converge")
+            if debug:
+                print("Warning: optimization did not converge")
+            start = time.time()
             for i in range(len(encoders)):
                 encoders[i].advance()
+            info['encode_time'] += time.time() - start
             continue
         cutoffs = []
         for i in range(len(encoders)):
@@ -450,6 +519,7 @@ def to_object(
         last_cutoffs = cutoffs
         done = True
         # print("*", cutoffs, [len(e.plane_Bs) for e in encoders])
+        start = time.time()
         for i in range(len(encoders)):
             if (
                 cutoffs[i] >= len(encoders[i].plane_Bs)
@@ -457,6 +527,7 @@ def to_object(
             ):
                 encoders[i].advance()
                 done = False
+        info['encode_time'] += time.time() - start
     # optimized_Bs = optimize(Bs, epss, target_eps=target_eps)  # Useful breakpoint
     # cutoffs = []
     # for i in range(len(encoders)):
@@ -492,6 +563,7 @@ def to_object(
     # cc = e.get_convex_curve()
     # plt.plot(cc[0], cc[1])
     result = []
+    start = time.time()
     # Gather ranks
     global_ranks = defaultdict(lambda: float("inf"))
     for i in range(len(encoders)):
@@ -500,7 +572,11 @@ def to_object(
             global_ranks[k] = min(global_ranks[k], v)
     for i in range(len(encoders)):
         result.append(encoders[i].finish(cutoffs[i], global_ranks))
-    return File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max)
+    info['finish_time'] = time.time() - start
+    if debug:
+        rich.print(info)
+    file = File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max)
+    return file
 
 
 # def from_disk(filename=None, debug=False):

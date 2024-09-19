@@ -86,7 +86,7 @@ def compress(
     with open(original, "rb") as f:
         x = np.fromfile(f, dtype=np.dtype(dtype)).reshape(shape_list)
     start = time.time()
-    file = core.to_object(x, topology=topology, target_eps=eps, debug=debug)
+    file = core.to_object(x, topology=topology, target_eps=eps, statistics=statistics, debug=debug)
     compressiontime = time.time() - start
     if statistics or compressed is not None:
         bson_data = file.encode()
