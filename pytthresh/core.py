@@ -118,7 +118,7 @@ class CompressedTensor:
 
 
 class File:
-    def __init__(self, compressed_tensors, shape, dtype, min, max):
+    def __init__(self, compressed_tensors, shape, dtype, min, max, tid0):
         self.compressed_tensors = compressed_tensors
 
         # "Metadata" needed to reconstruct the tensor
@@ -128,6 +128,8 @@ class File:
         # Min and max values for clipping. This prevents underflow/overflow and preserves the original data range (which helps when rendering)
         self.min = min
         self.max = max
+
+        self.tid0 = tid0
 
     def n_bytes(self):
         return sum([ct.n_bytes() for ct in self.compressed_tensors])
@@ -139,6 +141,7 @@ class File:
             "dtype": self.dtype.str,
             "min": self.min,
             "max": self.max,
+            "tid0": self.tid0,
         }
         return bson.encode(d)
 
@@ -160,6 +163,7 @@ class File:
             dtype=np.dtype(d["dtype"]),
             min=d["min"],
             max=d["max"],
+            tid0=d["tid0"],
         )
 
     def decompress(self, debug=False) -> np.ndarray:
@@ -170,7 +174,7 @@ class File:
         else:
             tensor_map = {i: tensors[i] for i in range(len(tensors))}
 
-            tid = 0
+            tid0 = self.tid0
             tn = qtn.TensorNetwork()
             for k, v in sorted(tensor_map.items()):
                 # if v.ndim == 3:
@@ -178,9 +182,9 @@ class File:
                 tn.add_tensor(v, tid=k)
 
             seen = np.zeros(len(tn.tensors), dtype=bool)
-            seen[tid] = True
+            seen[tid0] = True
 
-            g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])])
+            g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid0])])
 
             def recursion(tid, seen):
                 for edge in g.edges(tid):
@@ -575,7 +579,7 @@ def to_object(
     info['finish_time'] = time.time() - start
     if debug:
         rich.print(info)
-    file = File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max)
+    file = File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max, tid0=tid0)
     return file
 
 
