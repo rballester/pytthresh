@@ -192,11 +192,11 @@ class File:
                     if not seen[neighbor]:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
-                        tn._canonize_between_tids(neighbor, tid, absorb="right")
+                        tn._canonize_between_tids(neighbor, tid, absorb="right", cutoff=None)
                 data = tensor_map[tid].data
                 tn.tensor_map[tid].modify(data=data)
 
-            recursion(tid, seen)
+            recursion(tid0, seen)
             if debug:
                 for t in tn.tensors:
                     print(t)
