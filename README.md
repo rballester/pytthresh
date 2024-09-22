@@ -28,15 +28,17 @@ python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --recons
 
 ### TODO
 
+- Do the decomposition by iterative splitting
+- Skip canonization by absorbing singular values into both sides
+- Choose split method (svd, eig, svds, rsvd, etc.) based on matrix size
 - Balance rank cutoff (higher speed) with entropy coding (higher quality)
 - Negabinary: saves mask hassle, allows progressive reconstruction
 - Algorithm to limit absolute error
 - Allow specifying a target compression ratio
-- Profiling
 - Case when input tensor is all zeros produces nan (normsq is 0)
 - coveig method for tensor splitting
 - Check different flatten orders for different cores
-- Renormalize cores as they are compressed
+- Maybe: encode in ALS fashion to avoid accumulating errors?
 - Optimize dimension order
 - Work with float32 instead of 64?
 - Split into bricks and process in parallel

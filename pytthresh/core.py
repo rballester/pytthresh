@@ -386,13 +386,6 @@ def to_object(
         tn = tensor_network.build_tensor_network(x, topology)
         info['build_time'] = time.time() - start
 
-        # for k, v in tn.tensor_map.items():
-        # print(f"{k} -> {v.tags}")
-
-        # start = time.time()
-        # tn.compress_all(max_bond=256, canonize=True, inplace=True, absorb="both")
-        # tn.compress_all_tree(inplace=True)
-
         # order out spanning tree by depth first search
         def sorter(t, tn, distances, connectivity):
             return distances[t]
@@ -404,63 +397,26 @@ def to_object(
             tid0 = (x.ndim-1)//2
         span = tn.get_tree_span([tid0], sorter=sorter)
 
-        # First pass: orthogonalize towards tid0
-        # TODO see if we can build_tensor_network in already orthogonalized form
-        # start = time.time()
-        # for tid1, tid2, _ in span[::-1]:
-        #     tn._canonize_between_tids(
-        #         tid1, tid2, method="qr", absorb="right"
-        #     )
-        # info['orthogonalize_time'] = time.time() - start
-        info['canonize_time'] = 0
-
-        # Second pass: compress
-        # for tid1, tid2, _ in span:
-        #     # absorb='right' shifts orthog center inwards
-        #     tn._compress_between_tids(
-        #         tid1,
-        #         tid2,
-        #         absorb="right",
-        #         canonize_distance=float("inf")
-        #     )
-
-        # print("*********", time.time() - start)
-        # for i in range(1):
-            # tn.canonize_around(inplace=True, tags="C3", absorb="right")
-            # tn.canonize_around(inplace=True, tags="C0", absorb="right")
-        # for t in tn.tensors:
-        # print(t)
-
-        # best = tn.copy(deep=True)
-        # start = time.time()
-        # tid = 0
-        seen = np.zeros(len(tn.tensors), dtype=bool)
-        seen[tid0] = True
-        tensor_map = {}
-        # print(time.time()-start)
         # Make graph a default dict
         graph = defaultdict(lambda: set())
         for e in tn.get_tree_span(tids=[tid0]):
             graph[e[0]].add(e[1])
             graph[e[1]].add(e[0])
-        # l = [[e[0], e[1]] for e in tn.get_tree_span(tids=[tid])]
 
-        # start = time.time()
-        # tn.get_tree_span(tids=[tid])
-        # g = nx.Graph(l)
-        # info['graph_time'] = time.time() - start
-
+        # Recursively traverse tree
+        seen = np.zeros(len(tn.tensors), dtype=bool)
+        seen[tid0] = True
+        tensor_map = {}
+        info['canonize_time'] = 0
+        info['compress_time'] = 0
         def recursion(tid, seen):
+            # Canonized and compress `tid`
             for neighbor in graph[tid]:
                 if not seen[neighbor]:
-
-                    # tn._canonize_between_tids(
-                    #     tid, neighbor, method="qr", absorb="right"
-                    # )
-                    # tn._compress_between_tids(
-                    #     tid, neighbor, absorb="left", canonize_distance=False
-                    # )
-                    qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', gauge_smudge=0)
+                    start = time.time()
+                    qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', cutoff=target_eps**2/len(tn.tensors)*1e-1, cutoff_mode='rsum2', gauge_smudge=0)
+                    info['compress_time'] += time.time()-start
+            # Save `tid` for later lossy encoding
             tensor_map[tid] = qtn.Tensor(
                 tn.tensor_map[tid].data.copy(), inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
             )
@@ -477,9 +433,9 @@ def to_object(
                     recursion(neighbor, seen)
                     tn.tensor_map[tid] = src
 
-        start = time.time()
+        # start = time.time()
         recursion(tid0, seen)
-        info['decomposition_time'] = time.time() - start
+        # info['decomposition_time'] = time.time() - start
     # decomposition_time = time.time() - start
     # return tensor_map
     info['encode_time'] = 0
@@ -493,12 +449,12 @@ def to_object(
 
     done = False
     last_cutoffs = None
-    info['curve_time'] = 0
+    info['convex_hull_time'] = 0
     info['optimize_time'] = 0
     while not done:
         start = time.time()
         curves = [e.get_convex_curve() for e in encoders]
-        info['curve_time'] = time.time() - start
+        info['convex_hull_time'] = time.time() - start
         Bs = [c[0] for c in curves]
         epss = [c[1] for c in curves]
         try:
