@@ -42,8 +42,11 @@ class CompressedPlane:
         self.unique = unique
         self.counts = counts
 
-    def n_bytes(self):
+    def n_bits(self):
         return len(self.bits) * 32 + len(self.unique) * 32 + len(self.counts) * 32
+
+    def n_bytes(self):
+        return int(np.ceil(self.n_bits() / 8))
 
     def serialize(self):
         return [
@@ -73,7 +76,7 @@ class CompressedTensor:
 
     def n_bits(self):
         # get_compressed() returns int32's
-        return sum([cp.n_bytes() for cp in self.compressed_planes]) + len(self.signs)
+        return sum([cp.n_bits() for cp in self.compressed_planes]) + len(self.signs)
 
     def n_bytes(self):
         return int(np.ceil(self.n_bits() / 8))
