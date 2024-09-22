@@ -34,6 +34,7 @@ python pytthresh/cli.py compress --original data/3D_sphere_64_uchar.raw --recons
 - Balance rank cutoff (higher speed) with entropy coding (higher quality)
 - Negabinary: saves mask hassle, allows progressive reconstruction
 - Algorithm to limit absolute error
+- Reduce serialization overhead (currently a few KB's)
 - Allow specifying a target compression ratio
 - Case when input tensor is all zeros produces nan (normsq is 0)
 - coveig method for tensor splitting
