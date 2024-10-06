@@ -439,6 +439,7 @@ def to_object(
                     reduced="left",
                     method="eig",
                     cutoff=target_eps**2 / len(tn.tensors) * 1e-1,
+                    # cutoff=1e-10,
                     cutoff_mode="rsum2",
                     gauge_smudge=0,
                 )
