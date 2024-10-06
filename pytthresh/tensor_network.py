@@ -73,7 +73,10 @@ def peel_ranks(inputs, ranks):
 
 
 def build_tensor_network(x: np.ndarray, topology: str):
-    assert topology in ("tucker", "tt", "ett")
+    assert topology in ("single", "tucker", "tt", "ett")
+
+    if topology == "single":
+        return qtn.TensorNetwork([qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)], tags=["C0"])])
 
     if topology == "tucker":
         tensors = [qtn.Tensor(x, inds=[f"r{i}" for i in range(x.ndim)], tags=["C0"])]
@@ -84,6 +87,7 @@ def build_tensor_network(x: np.ndarray, topology: str):
             ]
         )
         return qtn.TensorNetwork(tensors)
+
     if topology == "tt":
         site_ind_id = "i{}"
     else:

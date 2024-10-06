@@ -179,6 +179,7 @@ class File:
             tensor_map = {i: tensors[i] for i in range(len(tensors))}
 
             tid0 = self.tid0
+            # tid0 = 3
             tn = qtn.TensorNetwork()
             for k, v in sorted(tensor_map.items()):
                 # if v.ndim == 3:
@@ -196,9 +197,10 @@ class File:
                     if not seen[neighbor]:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
-                        tn._canonize_between_tids(neighbor, tid, absorb="right", cutoff=None)
-                        data = tensor_map[tid].data
-                        tn.tensor_map[tid].modify(data=data)
+                        lix = qtn.tensor_core.tensor_make_single_bond(tn.tensor_map[neighbor], tn.tensor_map[tid])[0]
+                        q, r = tn.tensor_map[neighbor].split(left_inds=lix, cutoff=None, get='tensors', method='qr', absorb='right')
+                        q = q.transpose_like(tn.tensor_map[neighbor])
+                        tn.tensor_map[neighbor].modify(data=q.data)
             recursion(tid0, seen)
             if debug:
                 for t in tn.tensors:
@@ -381,64 +383,60 @@ def to_object(
     assert topology in ("tucker", "tt", "ett", "single")
     info['statistics_time'] = time.time() - start
 
-    if topology == "single":  # TODO This shouldn't be a separate case
-        # tn = qtn.TensorNetwork([qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])])
-        tensor_map = {0: qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])}
+    start = time.time()
+    tn = tensor_network.build_tensor_network(x, topology)
+    info['build_time'] = time.time() - start
+
+    # order out spanning tree by depth first search
+    def sorter(t, tn, distances, connectivity):
+        return distances[t]
+
+    # tid0 = tn.most_central_tid()
+    if topology in ('single', 'tucker'):
+        tid0 = 0
     else:
-        start = time.time()
-        tn = tensor_network.build_tensor_network(x, topology)
-        info['build_time'] = time.time() - start
+        tid0 = (x.ndim-1)//2
+    span = tn.get_tree_span([tid0], sorter=sorter)
 
-        # order out spanning tree by depth first search
-        def sorter(t, tn, distances, connectivity):
-            return distances[t]
+    # Make graph a default dict
+    graph = defaultdict(lambda: set())
+    for e in tn.get_tree_span(tids=[tid0]):
+        graph[e[0]].add(e[1])
+        graph[e[1]].add(e[0])
 
-        # tid0 = tn.most_central_tid()
-        if topology == 'tucker':
-            tid0 = 0
-        else:
-            tid0 = (x.ndim-1)//2
-        span = tn.get_tree_span([tid0], sorter=sorter)
+    # Recursively traverse tree
+    seen = np.zeros(len(tn.tensors), dtype=bool)
+    seen[tid0] = True
+    tensor_map = {}
+    info['canonize_time'] = 0
+    info['compress_time'] = 0
+    def recursion(tid, seen):
+        # Canonized and compress `tid`
+        for neighbor in graph[tid]:
+            if not seen[neighbor]:
+                start = time.time()
+                # TODO use get='tensors' to avoid having to canonize afterwards
+                qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', cutoff=target_eps**2/len(tn.tensors)*1e-1, cutoff_mode='rsum2', gauge_smudge=0)
+                info['compress_time'] += time.time()-start
+        # Save `tid` for later lossy encoding
+        tensor_map[tid] = qtn.Tensor(
+            tn.tensor_map[tid].data.copy(), inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
+        )
 
-        # Make graph a default dict
-        graph = defaultdict(lambda: set())
-        for e in tn.get_tree_span(tids=[tid0]):
-            graph[e[0]].add(e[1])
-            graph[e[1]].add(e[0])
+        for neighbor in graph[tid]:
+            if not seen[neighbor]:
+                start = time.time()
+                seen[neighbor] = True
+                src = tn.tensor_map[tid].copy(deep=True)
+                tn._canonize_between_tids(
+                    tid, neighbor, method='qr', absorb="right", gauge_smudge=0
+                )
+                info['canonize_time'] += time.time() - start
+                recursion(neighbor, seen)
+                tn.tensor_map[tid] = src
 
-        # Recursively traverse tree
-        seen = np.zeros(len(tn.tensors), dtype=bool)
-        seen[tid0] = True
-        tensor_map = {}
-        info['canonize_time'] = 0
-        info['compress_time'] = 0
-        def recursion(tid, seen):
-            # Canonized and compress `tid`
-            for neighbor in graph[tid]:
-                if not seen[neighbor]:
-                    start = time.time()
-                    # TODO use get='tensors' to avoid having to canonize afterwards
-                    qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', cutoff=target_eps**2/len(tn.tensors)*1e-1, cutoff_mode='rsum2', gauge_smudge=0)
-                    info['compress_time'] += time.time()-start
-            # Save `tid` for later lossy encoding
-            tensor_map[tid] = qtn.Tensor(
-                tn.tensor_map[tid].data.copy(), inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
-            )
-
-            for neighbor in graph[tid]:
-                if not seen[neighbor]:
-                    start = time.time()
-                    seen[neighbor] = True
-                    src = tn.tensor_map[tid].copy(deep=True)
-                    tn._canonize_between_tids(
-                        tid, neighbor, method='qr', absorb="right", gauge_smudge=0
-                    )
-                    info['canonize_time'] += time.time() - start
-                    recursion(neighbor, seen)
-                    tn.tensor_map[tid] = src
-
-        # start = time.time()
-        recursion(tid0, seen)
+    # start = time.time()
+    recursion(tid0, seen)
         # info['decomposition_time'] = time.time() - start
     # decomposition_time = time.time() - start
     # return tensor_map
