@@ -15,7 +15,7 @@ def encode(x):
     """
 
     # TODO use bit array
-    result = np.zeros(2 * len(x), dtype=np.uint32)
+    result = np.zeros(1 + len(x), dtype=np.uint32)
     where = 0
     last = 1
     counter = 0
