@@ -196,9 +196,8 @@ class File:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
                         tn._canonize_between_tids(neighbor, tid, absorb="right", cutoff=None)
-                data = tensor_map[tid].data
-                tn.tensor_map[tid].modify(data=data)
-
+                        data = tensor_map[tid].data
+                        tn.tensor_map[tid].modify(data=data)
             recursion(tid0, seen)
             if debug:
                 for t in tn.tensors:
@@ -417,6 +416,7 @@ def to_object(
             for neighbor in graph[tid]:
                 if not seen[neighbor]:
                     start = time.time()
+                    # TODO use get='tensors' to avoid having to canonize afterwards
                     qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', cutoff=target_eps**2/len(tn.tensors)*1e-1, cutoff_mode='rsum2', gauge_smudge=0)
                     info['compress_time'] += time.time()-start
             # Save `tid` for later lossy encoding
