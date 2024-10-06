@@ -5,7 +5,6 @@ import cotengra as ctg
 import itertools
 
 
-
 def skeleton(N: int, topology: str) -> dict:
     assert topology in ("tucker", "tt", "ett")
 
@@ -20,11 +19,11 @@ def skeleton(N: int, topology: str) -> dict:
     else:
         letter = f"s"
     nodes[len(nodes)] = [f"i0", f"r{1}"]
-    for i in range(1, N-1):
+    for i in range(1, N - 1):
         nodes[len(nodes)] = [f"r{i}", f"{letter}{i}", f"r{i+1}"]
     nodes[len(nodes)] = [f"r{N-1}", f"i{N-1}"]
-    if topology == 'ett':
-        for i in range(1, N-1):
+    if topology == "ett":
+        for i in range(1, N - 1):
             nodes[len(nodes)] = [f"i{i}", f"s{i}"]
     return nodes
 
@@ -62,7 +61,7 @@ def peel_ranks(inputs, ranks):
             prod *= ranks[edge]
         for edge in graph[tensor].keys():
             if edge != incoming_edge and graph[tensor][edge] is not None:
-                ranks[edge] = min(prod//ranks[edge], ranks[edge])
+                ranks[edge] = min(prod // ranks[edge], ranks[edge])
                 outwards(graph[tensor][edge], edge)
 
     ranks = ranks.copy()
@@ -76,7 +75,9 @@ def build_tensor_network(x: np.ndarray, topology: str):
     assert topology in ("single", "tucker", "tt", "ett")
 
     if topology == "single":
-        return qtn.TensorNetwork([qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)], tags=["C0"])])
+        return qtn.TensorNetwork(
+            [qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)], tags=["C0"])]
+        )
 
     if topology == "tucker":
         tensors = [qtn.Tensor(x, inds=[f"r{i}" for i in range(x.ndim)], tags=["C0"])]

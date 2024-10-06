@@ -197,10 +197,19 @@ class File:
                     if not seen[neighbor]:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
-                        lix = qtn.tensor_core.tensor_make_single_bond(tn.tensor_map[neighbor], tn.tensor_map[tid])[0]
-                        q, r = tn.tensor_map[neighbor].split(left_inds=lix, cutoff=None, get='tensors', method='qr', absorb='right')
+                        lix = qtn.tensor_core.tensor_make_single_bond(
+                            tn.tensor_map[neighbor], tn.tensor_map[tid]
+                        )[0]
+                        q, r = tn.tensor_map[neighbor].split(
+                            left_inds=lix,
+                            cutoff=None,
+                            get="tensors",
+                            method="qr",
+                            absorb="right",
+                        )
                         q = q.transpose_like(tn.tensor_map[neighbor])
                         tn.tensor_map[neighbor].modify(data=q.data)
+
             recursion(tid0, seen)
             if debug:
                 for t in tn.tensors:
@@ -372,30 +381,33 @@ class TensorEncoder:
 
 
 def to_object(
-    x: np.ndarray, topology: str, target_eps: float = None, statistics: bool = False, debug: bool = False
+    x: np.ndarray,
+    topology: str,
+    target_eps: float = None,
+    statistics: bool = False,
+    debug: bool = False,
 ) -> File:
-    bloh = time.time()
     info = {}
     start = time.time()
     dtype = x.dtype
     a_min, a_max = x.min().item(), x.max().item()
     x = x.astype(np.float64)
     assert topology in ("tucker", "tt", "ett", "single")
-    info['statistics_time'] = time.time() - start
+    info["statistics_time"] = time.time() - start
 
     start = time.time()
     tn = tensor_network.build_tensor_network(x, topology)
-    info['build_time'] = time.time() - start
+    info["build_time"] = time.time() - start
 
     # order out spanning tree by depth first search
     def sorter(t, tn, distances, connectivity):
         return distances[t]
 
     # tid0 = tn.most_central_tid()
-    if topology in ('single', 'tucker'):
+    if topology in ("single", "tucker"):
         tid0 = 0
     else:
-        tid0 = (x.ndim-1)//2
+        tid0 = (x.ndim - 1) // 2
     span = tn.get_tree_span([tid0], sorter=sorter)
 
     # Make graph a default dict
@@ -404,23 +416,38 @@ def to_object(
         graph[e[0]].add(e[1])
         graph[e[1]].add(e[0])
 
+    ###########################
     # Recursively traverse tree
+    ###########################
+
     seen = np.zeros(len(tn.tensors), dtype=bool)
     seen[tid0] = True
     tensor_map = {}
-    info['canonize_time'] = 0
-    info['compress_time'] = 0
+    info["canonize_time"] = 0
+    info["compress_time"] = 0
+
     def recursion(tid, seen):
         # Canonized and compress `tid`
         for neighbor in graph[tid]:
             if not seen[neighbor]:
                 start = time.time()
                 # TODO use get='tensors' to avoid having to canonize afterwards
-                qtn.tensor_compress_bond(tn.tensor_map[tid], tn.tensor_map[neighbor], absorb='left', reduced='left', method='eig', cutoff=target_eps**2/len(tn.tensors)*1e-1, cutoff_mode='rsum2', gauge_smudge=0)
-                info['compress_time'] += time.time()-start
+                qtn.tensor_compress_bond(
+                    tn.tensor_map[tid],
+                    tn.tensor_map[neighbor],
+                    absorb="left",
+                    reduced="left",
+                    method="eig",
+                    cutoff=target_eps**2 / len(tn.tensors) * 1e-1,
+                    cutoff_mode="rsum2",
+                    gauge_smudge=0,
+                )
+                info["compress_time"] += time.time() - start
         # Save `tid` for later lossy encoding
         tensor_map[tid] = qtn.Tensor(
-            tn.tensor_map[tid].data.copy(), inds=tn.tensor_map[tid].inds, tags=tn.tensor_map[tid].tags
+            tn.tensor_map[tid].data.copy(),
+            inds=tn.tensor_map[tid].inds,
+            tags=tn.tensor_map[tid].tags,
         )
 
         for neighbor in graph[tid]:
@@ -429,40 +456,45 @@ def to_object(
                 seen[neighbor] = True
                 src = tn.tensor_map[tid].copy(deep=True)
                 tn._canonize_between_tids(
-                    tid, neighbor, method='qr', absorb="right", gauge_smudge=0
+                    tid, neighbor, method="qr", absorb="right", gauge_smudge=0
                 )
-                info['canonize_time'] += time.time() - start
+                info["canonize_time"] += time.time() - start
                 recursion(neighbor, seen)
                 tn.tensor_map[tid] = src
 
     # start = time.time()
     recursion(tid0, seen)
-        # info['decomposition_time'] = time.time() - start
+    # info['decomposition_time'] = time.time() - start
     # decomposition_time = time.time() - start
     # return tensor_map
-    info['encode_time'] = 0
+
+    ##########################
+    # Lossy bit-plane encoding
+    ##########################
+
+    info["encode_time"] = 0
     start = time.time()
     encoders = []
     for k, v in sorted(tensor_map.items()):
         e = TensorEncoder(v)
         e.advance()
         encoders.append(e)
-    info['encode_time'] += time.time() - start
+    info["encode_time"] += time.time() - start
 
     done = False
     last_cutoffs = None
-    info['convex_hull_time'] = 0
-    info['optimize_time'] = 0
+    info["convex_hull_time"] = 0
+    info["optimize_time"] = 0
     while not done:
         start = time.time()
         curves = [e.get_convex_curve() for e in encoders]
-        info['convex_hull_time'] = time.time() - start
+        info["convex_hull_time"] = time.time() - start
         Bs = [c[0] for c in curves]
         epss = [c[1] for c in curves]
         try:
             start = time.time()
             optimized_Bs = optimize(Bs, epss, target_eps=target_eps)
-            info['optimize_time'] += time.time() - start
+            info["optimize_time"] += time.time() - start
         except ValueError:
             # Did not converge: we advance all encoders and try again
             if debug:
@@ -470,7 +502,7 @@ def to_object(
             start = time.time()
             for i in range(len(encoders)):
                 encoders[i].advance()
-            info['encode_time'] += time.time() - start
+            info["encode_time"] += time.time() - start
             continue
         cutoffs = []
         for i in range(len(encoders)):
@@ -489,7 +521,7 @@ def to_object(
             ):
                 encoders[i].advance()
                 done = False
-        info['encode_time'] += time.time() - start
+        info["encode_time"] += time.time() - start
     # optimized_Bs = optimize(Bs, epss, target_eps=target_eps)  # Useful breakpoint
     # cutoffs = []
     # for i in range(len(encoders)):
@@ -524,19 +556,26 @@ def to_object(
     # plt.plot(e.plane_Bs, e.plane_epss)
     # cc = e.get_convex_curve()
     # plt.plot(cc[0], cc[1])
+
+    ###########################
+    # Save with the final ranks
+    ###########################
+
     result = []
     start = time.time()
-    # Gather and peel ranks
     global_ranks = defaultdict(lambda: float("inf"))
     for i in range(len(encoders)):
         ranks = encoders[i].get_ranks(cutoffs[i])
         for k, v in ranks.items():
             global_ranks[k] = min(global_ranks[k], v)
+
+    # Peel ranks
     inputs = [t.inds for t in tensor_map.values()]
     global_ranks = pyt.tensor_network.peel_ranks(inputs, global_ranks)
+
     for i in range(len(encoders)):
         result.append(encoders[i].finish(cutoffs[i], global_ranks))
-    info['finish_time'] = time.time() - start
+    info["finish_time"] = time.time() - start
     if debug:
         rich.print(info)
     file = File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max, tid0=tid0)
