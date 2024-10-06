@@ -2,6 +2,7 @@ import time
 from collections import defaultdict
 import bson
 import rich
+import pytthresh as pyt
 import constriction
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -101,7 +102,7 @@ class CompressedTensor:
 
     def serialize(self):
         return [
-            {k: v.item() for k, v in self.ind_sizes.items()},
+            {k: int(v) for k, v in self.ind_sizes.items()},
             [cp.serialize() for cp in self.compressed_planes],
             np.packbits(self.signs).tobytes(),
             len(self.signs),
@@ -380,7 +381,7 @@ def to_object(
     assert topology in ("tucker", "tt", "ett", "single")
     info['statistics_time'] = time.time() - start
 
-    if topology == "single":
+    if topology == "single":  # TODO This shouldn't be a separate case
         # tn = qtn.TensorNetwork([qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])])
         tensor_map = {0: qtn.Tensor(x, inds=[f"i{i}" for i in range(x.ndim)])}
     else:
@@ -527,12 +528,14 @@ def to_object(
     # plt.plot(cc[0], cc[1])
     result = []
     start = time.time()
-    # Gather ranks
+    # Gather and peel ranks
     global_ranks = defaultdict(lambda: float("inf"))
     for i in range(len(encoders)):
         ranks = encoders[i].get_ranks(cutoffs[i])
         for k, v in ranks.items():
             global_ranks[k] = min(global_ranks[k], v)
+    inputs = [t.inds for t in tensor_map.values()]
+    global_ranks = pyt.tensor_network.peel_ranks(inputs, global_ranks)
     for i in range(len(encoders)):
         result.append(encoders[i].finish(cutoffs[i], global_ranks))
     info['finish_time'] = time.time() - start

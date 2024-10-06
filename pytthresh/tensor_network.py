@@ -1,5 +1,75 @@
 import numpy as np
 import quimb.tensor as qtn
+from collections import defaultdict
+import cotengra as ctg
+import itertools
+
+
+
+def skeleton(N: int, topology: str) -> dict:
+    assert topology in ("tucker", "tt", "ett")
+
+    nodes = defaultdict(lambda: set())
+    if topology == "tucker":
+        nodes[len(nodes)] = [f"r{i}" for i in range(N)]
+        for i in range(N):
+            nodes[len(nodes)] = [f"i{i}", f"r{i}"]
+        return nodes
+    if topology == "tt":
+        letter = f"i"
+    else:
+        letter = f"s"
+    nodes[len(nodes)] = [f"i0", f"r{1}"]
+    for i in range(1, N-1):
+        nodes[len(nodes)] = [f"r{i}", f"{letter}{i}", f"r{i+1}"]
+    nodes[len(nodes)] = [f"r{N-1}", f"i{N-1}"]
+    if topology == 'ett':
+        for i in range(1, N-1):
+            nodes[len(nodes)] = [f"i{i}", f"s{i}"]
+    return nodes
+
+
+def peel_ranks(inputs, ranks):
+
+    unique, counts = np.unique(list(itertools.chain(*inputs)), return_counts=True)
+    output = unique[counts == 1]
+
+    hg = ctg.get_hypergraph(inputs, output, None)
+    graph = defaultdict(lambda: dict())
+    for index, edge in hg.edges.items():
+        if len(edge) == 1:
+            graph[edge[0]][index] = None
+        else:
+            assert len(edge) == 2
+            graph[edge[0]][index] = edge[1]
+            graph[edge[1]][index] = edge[0]
+
+    def inwards(tensor, incoming_edge):
+        for edge in graph[tensor].keys():
+            if edge != incoming_edge and graph[tensor][edge] is not None:
+                inwards(graph[tensor][edge], edge)
+                ranks[edge] = min(tensor_sizes[graph[tensor][edge]], ranks[edge])
+        prod = 1
+        for edge in graph[tensor].keys():
+            if edge != incoming_edge:
+                prod *= ranks[edge]
+        tensor_sizes[tensor] = prod
+        return tensor_sizes[tensor]
+
+    def outwards(tensor, incoming_edge):
+        prod = 1
+        for edge in graph[tensor].keys():
+            prod *= ranks[edge]
+        for edge in graph[tensor].keys():
+            if edge != incoming_edge and graph[tensor][edge] is not None:
+                ranks[edge] = min(prod//ranks[edge], ranks[edge])
+                outwards(graph[tensor][edge], edge)
+
+    ranks = ranks.copy()
+    tensor_sizes = {}
+    inwards(0, incoming_edge=None)
+    outwards(0, incoming_edge=None)
+    return ranks
 
 
 def build_tensor_network(x: np.ndarray, topology: str):
