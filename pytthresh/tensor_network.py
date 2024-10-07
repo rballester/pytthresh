@@ -116,14 +116,19 @@ def plain_to_qtt(x):
         x,
         [[0, 2**L - x.shape[i]] for i in range(x.ndim)],
     )
-    order = np.arange(x.ndim * L).reshape(x.ndim, L).T.flatten()
+    # order = np.arange(x.ndim * L)
+    # order = np.arange(x.ndim * L).reshape(x.ndim, L).T.flatten()
     # order = np.arange(x.ndim * L).reshape(L, x.ndim).T.flatten()
-    x_reshaped = x.reshape([2] * (x.ndim * L)).transpose(order)
+    order = None
+    # print(order)
+    # x_reshaped = x.reshape([2] * (x.ndim * L)).transpose(order)
+    x_reshaped = x.reshape([2] * (x.ndim * L))
     info = {"order": order, "padded_shape": x.shape, "shape": orig_shape}
     return x_reshaped, info
 
 
 def qtt_to_plain(x, info):
-    x = x.transpose(np.argsort(info["order"]))
+    if info["order"] is not None:
+        x = x.transpose(np.argsort(info["order"]))
     x = x.reshape(info["padded_shape"])
     return x[tuple(slice(0, sh) for sh in info["shape"])]

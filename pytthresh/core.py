@@ -5,7 +5,6 @@ import rich
 import pytthresh as pyt
 import constriction
 import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import quimb.tensor as qtn
 import scipy
@@ -191,11 +190,14 @@ class File:
             seen = np.zeros(len(tn.tensors), dtype=bool)
             seen[tid0] = True
 
-            g = nx.Graph([[e[0], e[1]] for e in tn.get_tree_span(tids=[tid0])])
+            graph = defaultdict(lambda: set())
+            for e in tn.get_tree_span(tids=[tid0]):
+                graph[e[0]].add(e[1])
+                graph[e[1]].add(e[0])
 
             def recursion(tid, seen):
-                for edge in g.edges(tid):
-                    neighbor = edge[1]
+                for neighbor in graph[tid]:  # .edges(tid):
+                    # neighbor = edge[1]
                     if not seen[neighbor]:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
