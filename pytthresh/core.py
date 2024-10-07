@@ -122,7 +122,7 @@ class CompressedTensor:
 
 
 class File:
-    def __init__(self, compressed_tensors, shape, dtype, min, max, tid0):
+    def __init__(self, compressed_tensors, shape, dtype, min, max, tid0, qtt_info):
         self.compressed_tensors = compressed_tensors
 
         # "Metadata" needed to reconstruct the tensor
@@ -134,6 +134,7 @@ class File:
         self.max = max
 
         self.tid0 = tid0
+        self.qtt_info = qtt_info
 
     def n_bytes(self):
         return sum([ct.n_bytes() for ct in self.compressed_tensors])
@@ -146,6 +147,7 @@ class File:
             "min": self.min,
             "max": self.max,
             "tid0": self.tid0,
+            "qtt_info": self.qtt_info,
         }
         return bson.encode(d)
 
@@ -239,6 +241,9 @@ class File:
 
         # Clip and cast to original dtype
         np.clip(result, self.min, self.max, out=result)
+
+        if self.qtt_info is not None:
+            result = pyt.tensor_network.qtt_to_plain(result, self.qtt_info)
         return result.astype(self.dtype)
 
 
@@ -397,14 +402,22 @@ def to_object(
     topology: str,
     target_eps: float = None,
     statistics: bool = False,
+    qtt: bool = False,
     debug: bool = False,
 ) -> File:
+    assert topology in ("tucker", "qtt", "tt", "ett", "single")
+
+    if topology == "qtt":
+        x, qtt_info = pyt.tensor_network.plain_to_qtt(x)
+        topology = "tt"
+    else:
+        qtt_info = None
+
     info = {}
     start = time.time()
     dtype = x.dtype
     a_min, a_max = x.min().item(), x.max().item()
     x = x.astype(np.float64)
-    assert topology in ("tucker", "tt", "ett", "single")
     info["statistics_time"] = time.time() - start
 
     start = time.time()
@@ -622,7 +635,15 @@ def to_object(
     info["finish_time"] = time.time() - start
     if debug:
         rich.print(info)
-    file = File(result, shape=x.shape, dtype=dtype, min=a_min, max=a_max, tid0=tid0)
+    file = File(
+        result,
+        shape=x.shape,
+        dtype=dtype,
+        min=a_min,
+        max=a_max,
+        tid0=tid0,
+        qtt_info=qtt_info,
+    )
     return file
 
 

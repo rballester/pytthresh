@@ -12,6 +12,7 @@ class Topology(str, Enum):
     tucker = "tucker"
     tt = "tt"
     ett = "ett"
+    qtt = "qtt"
     single = "single"
 
 
