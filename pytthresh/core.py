@@ -197,18 +197,30 @@ class File:
                     if not seen[neighbor]:
                         seen[neighbor] = True
                         recursion(neighbor, seen)
-                        lix = qtn.tensor_core.tensor_make_single_bond(
-                            tn.tensor_map[neighbor], tn.tensor_map[tid]
-                        )[0]
-                        q, r = tn.tensor_map[neighbor].split(
-                            left_inds=lix,
-                            cutoff=None,
-                            get="tensors",
+                        # tn._canonize_between_tids(
+                        #     neighbor, tid, absorb="right", cutoff=None
+                        # )
+                        qtn.tensor_core.tensor_compress_bond(
+                            tn.tensor_map[neighbor],
+                            tn.tensor_map[tid],
                             method="qr",
                             absorb="right",
+                            cutoff=None,
                         )
-                        q = q.transpose_like(tn.tensor_map[neighbor])
-                        tn.tensor_map[neighbor].modify(data=q.data)
+                        # lix = qtn.tensor_core.tensor_make_single_bond(
+                        #     tn.tensor_map[neighbor], tn.tensor_map[tid]
+                        # )[0]
+                        # q, r = tn.tensor_map[neighbor].split(
+                        #     left_inds=lix,
+                        #     cutoff=None,
+                        #     get="tensors",s
+                        #     method="svd",
+                        #     absorb="right",
+                        # )
+                        # q = q.transpose_like(tn.tensor_map[neighbor])
+                        # tn.tensor_map[neighbor].modify(data=q.data)
+                        data = tensor_map[tid].data
+                        tn.tensor_map[tid].modify(data=data)
 
             recursion(tid0, seen)
             if debug:
@@ -422,9 +434,15 @@ def to_object(
 
     seen = np.zeros(len(tn.tensors), dtype=bool)
     seen[tid0] = True
-    tensor_map = {}
     info["canonize_time"] = 0
     info["compress_time"] = 0
+
+    # def multiply_diagonal(t, s):
+    #     data = t.data
+    #     s = np.expand_dims(
+    #         s, tuple(np.delete(np.arange(s.ndim), t.inds.index(s.inds[0])))
+    #     )
+    #     t.modify(data=np.multiply(data, s))
 
     def recursion(tid, seen):
         # Canonized and compress `tid`
@@ -432,7 +450,7 @@ def to_object(
             if not seen[neighbor]:
                 start = time.time()
                 # TODO use get='tensors' to avoid having to canonize afterwards
-                qtn.tensor_compress_bond(
+                ret = qtn.tensor_compress_bond(
                     tn.tensor_map[tid],
                     tn.tensor_map[neighbor],
                     absorb="left",
@@ -443,21 +461,48 @@ def to_object(
                     cutoff_mode="rsum2",
                     gauge_smudge=0,
                 )
+                # reco = tn.contract(output_inds=tn.outer_inds())
+                # np.linalg.norm(reco.data - x) / np.linalg.norm(x)
+                # T1 = tn.tensor_map[tid]
+                # T2 = tn.tensor_map[neighbor]
+                # lix, bix, rix = qtn.tensor_core.tensor_make_single_bond(T1, T2)
+                # T1C, *s, M = T1.split(
+                #     left_inds=lix,
+                #     right_inds=bix,
+                #     get="tensors",
+                #     absorb=None,
+                #     cutoff=0,
+                # )
+                # T2C = M @ T2
+                # T1C.transpose_like_(T1)
+                # T2C.transpose_like_(T2)
+                # np.broadcast_to(s[0].data, T1C.shape)
+                # multiply_diagonal(T1C, s[0])
+                # T1C.multiply_index_diagonal(s[0].inds[0], s[0], inplace=False)
                 info["compress_time"] += time.time() - start
-        # Save `tid` for later lossy encoding
-        tensor_map[tid] = qtn.Tensor(
-            tn.tensor_map[tid].data.copy(),
-            inds=tn.tensor_map[tid].inds,
-            tags=tn.tensor_map[tid].tags,
-        )
 
         for neighbor in graph[tid]:
             if not seen[neighbor]:
                 start = time.time()
                 seen[neighbor] = True
                 src = tn.tensor_map[tid].copy(deep=True)
-                tn._canonize_between_tids(
-                    tid, neighbor, method="qr", absorb="right", gauge_smudge=0
+                # Tl = tn.tensor_map[tid]
+                # Tr = tn.tensor_map[neighbor]
+                # qtn.tensor_core.tensor_canonize_bond(
+                #     Tl,
+                #     Tr,
+                #     method='qr',
+                #     absorb='right',
+                # )
+                # tn._canonize_between_tids(
+                #     tid, neighbor, method="qr", absorb="right", gauge_smudge=0
+                # )
+                qtn.tensor_core.tensor_compress_bond(
+                    tn.tensor_map[tid],
+                    tn.tensor_map[neighbor],
+                    method="qr",
+                    absorb="right",
+                    gauge_smudge=0,
                 )
                 info["canonize_time"] += time.time() - start
                 recursion(neighbor, seen)
@@ -476,7 +521,7 @@ def to_object(
     info["encode_time"] = 0
     start = time.time()
     encoders = []
-    for k, v in sorted(tensor_map.items()):
+    for k, v in sorted(tn.tensor_map.items()):
         e = TensorEncoder(v)
         e.advance()
         encoders.append(e)
@@ -509,7 +554,8 @@ def to_object(
         for i in range(len(encoders)):
             cutoffs.append(encoders[i]._B_to_index(optimized_Bs[i]))
         if last_cutoffs is not None and np.all(last_cutoffs == cutoffs):
-            print("Cutoffs converged, we break here")
+            if debug:
+                print("Cutoffs converged, we break here")
             break
         last_cutoffs = cutoffs
         done = True
@@ -543,8 +589,6 @@ def to_object(
     #     plt.legend()
     #     plt.savefig("curve.pdf")
 
-    cutoffs = np.round(cutoffs, 3)
-
     if debug:
         print(
             "Cutoffs:",
@@ -571,9 +615,8 @@ def to_object(
             global_ranks[k] = min(global_ranks[k], v)
 
     # Peel ranks
-    inputs = [t.inds for t in tensor_map.values()]
+    inputs = [t.inds for t in tn.tensor_map.values()]
     global_ranks = pyt.tensor_network.peel_ranks(inputs, global_ranks)
-
     for i in range(len(encoders)):
         result.append(encoders[i].finish(cutoffs[i], global_ranks))
     info["finish_time"] = time.time() - start

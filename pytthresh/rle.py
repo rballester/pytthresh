@@ -14,7 +14,6 @@ def encode(x):
     The first run is assumed to consist of 1s (it may have length 0)
     """
 
-    # TODO use bit array
     result = np.zeros(1 + len(x), dtype=np.uint32)
     where = 0
     last = 1
