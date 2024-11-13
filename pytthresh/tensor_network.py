@@ -110,11 +110,11 @@ def build_tensor_network(x: np.ndarray, topology: str):
 
 def plain_to_qtt(x):
     orig_shape = x.shape
-    max_shape = max(x.shape)
-    L = np.ceil(np.log2(max_shape)).astype(int)
+    # max_shape = max(x.shape)
+    # L = np.ceil(np.log2(max_shape)).astype(int)
     x = np.pad(
         x,
-        [[0, 2**L - x.shape[i]] for i in range(x.ndim)],
+        [[0, 2**np.ceil(np.log2(x.shape[i])).astype(int) - x.shape[i]] for i in range(x.ndim)],
     )
     # order = np.arange(x.ndim * L)
     # order = np.arange(x.ndim * L).reshape(x.ndim, L).T.flatten()
@@ -122,7 +122,7 @@ def plain_to_qtt(x):
     order = None
     # print(order)
     # x_reshaped = x.reshape([2] * (x.ndim * L)).transpose(order)
-    x_reshaped = x.reshape([2] * (x.ndim * L))
+    x_reshaped = x.reshape([2] * np.ceil(np.log2(x.size)).astype(int))
     info = {"order": order, "padded_shape": x.shape, "shape": orig_shape}
     return x_reshaped, info
 
