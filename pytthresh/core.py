@@ -169,6 +169,7 @@ class File:
             min=d["min"],
             max=d["max"],
             tid0=d["tid0"],
+            qtt_info=d["qtt_info"],
         )
 
     def decompress(self, debug=False) -> np.ndarray:
