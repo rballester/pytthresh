@@ -1,4 +1,8 @@
-# pytthresh: Python Implementation of the TTHRESH Grid Data Compressor
+# pytthresh: Python Entropy Coding of Tree Tensor Networks
+
+Implementation of the paper [R. Ballester-Ripoll, R. Bujack: *Entropy Coding Compression of Tree Tensor Networks*](https://openreview.net/forum?id=hGsxrFF0tY), presented in [CoLoRAI 2025](https://april-tools.github.io/colorai/) (part of the [AAAI 2025 conference](https://aaai.org/conference/aaai/aaai-25/)).
+
+![Entropy Coding Compression of Tree Tensor Networks](https://github.com/user-attachments/assets/ba0269f6-9642-4947-a15f-7b7f6ad12a22)
 
 ### Installation
 
